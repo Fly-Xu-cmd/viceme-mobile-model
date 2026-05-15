@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import {
-  ArrowUp, Plus, Mic, MoreHorizontal, Trash2, Search, Pencil, ChevronLeft, ChevronRight, ChevronDown,
-  Copy, Share2, RotateCcw, Check, CheckCheck, AlertCircle, Pin, PinOff,
-  MessageSquare, Compass, Bell, User, Camera, Zap, X, MessageCircle,
-  Settings, BookOpen, Type, PlayCircle, ShieldCheck, Volume2, Phone, Minus,
-  Sparkles, ScanLine, Image, Globe, ExternalLink, Pause, Play,
-  Loader2, CheckCircle2, Circle, Shield, Clock,
+  ArrowUp, Mic, Trash2, Search, Pencil, ChevronLeft, ChevronRight, ChevronDown,
+  Check, CheckCheck, AlertCircle,
+  MessageSquare, Compass, Bell, User, Camera, X, MessageCircle,
+  Settings, BookOpen, Type, ShieldCheck, Volume2, Phone,
+  Globe, ExternalLink, Pause, Play,
+  Loader2, CheckCircle2, Circle, Shield,
 } from "lucide-react"
 import { AnimatePresence, motion, useMotionValue, useTransform, animate } from "framer-motion"
 import { cn } from "@/lib/utils"
@@ -174,14 +174,14 @@ function AgentDetailPage() {
   const relatedSessions = sessions.filter((s) => agent.sessions.includes(s.id))
   const isRunning = (taskState === "executing" || taskState === "paused" || taskState === "authorizing") && agent.id === "agent-research"
 
-  const { topLevel, percent, doneCount, total } = (() => {
-    if (!isRunning) return { topLevel: [] as import("@/types").TaskPhase[], percent: 0, doneCount: 0, total: 0 }
+  const { percent, doneCount, total } = (() => {
+    if (!isRunning) return { percent: 0, doneCount: 0, total: 0 }
     const tl = taskPhases.filter((p) => !p.authType)
     const all: import("@/types").TaskPhase[] = []
     tl.forEach((p) => { all.push(p); if (p.children) all.push(...p.children) })
     const d = all.filter((p) => p.status === "done").length
     const t = all.length
-    return { topLevel: tl, percent: t > 0 ? Math.round((d / t) * 100) : 0, doneCount: d, total: t }
+    return { percent: t > 0 ? Math.round((d / t) * 100) : 0, doneCount: d, total: t }
   })()
 
   return (
@@ -1031,7 +1031,7 @@ function AgreementPage() {
 }
 
 /* ── Login Page (full screen) ── */
-function LoginPage() {
+export function LoginPage() {
   const setShowLogin = useChatStore((s) => s.setShowLogin)
   const setIsLoggedIn = useChatStore((s) => s.setIsLoggedIn)
   const [agreed, setAgreed] = useState(false)
