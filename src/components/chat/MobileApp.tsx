@@ -52,9 +52,9 @@ function TabBar() {
   }
 
   const tabs = [
-    { id: "agents", label: "智能体", icon: <Compass className="size-5" /> },
     { id: "create", label: "创建", icon: <span className="text-[22px] leading-none font-light">+</span> },
-    { id: "profile", label: "设置", icon: <Settings className="size-5" /> },
+    { id: "agents", label: "智能体", icon: <Compass className="size-5" /> },
+    { id: "profile", label: "我的", icon: <Settings className="size-5" /> },
   ]
 
   return (
