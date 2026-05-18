@@ -44,9 +44,11 @@ function TabBar() {
   const handleTabClick = (id: string) => {
     if (id === "create") {
       setActiveTab("create" as TabId)
-      if (!isInConversation) newChat()
+      if (isInConversation) return
+      if (pageView !== "tabs") goBack()
+      newChat()
     } else {
-      if (isInConversation) goBack()
+      if (pageView !== "tabs") goBack()
       setActiveTab(id as TabId)
     }
   }
@@ -62,7 +64,7 @@ function TabBar() {
       {tabs.map((tab) => {
         const isActive = tab.id === "create"
           ? isInConversation
-          : !isInConversation && activeTab === tab.id
+          : pageView === "tabs" && activeTab === tab.id
 
         return (
           <button key={tab.id} onClick={() => handleTabClick(tab.id)}
