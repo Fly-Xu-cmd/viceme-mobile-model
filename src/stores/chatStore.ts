@@ -2,7 +2,7 @@ import { create } from "zustand"
 import type {
   ChatMessage, ChatSession, AgentRecord, AppNotification,
   TabId, PageView, TaskPhase, ClarifyCard, BuildPlan, TaskResult, TaskState,
-  PermissionType, PermissionStatus, ImageAttachment,
+  PermissionType, PermissionStatus, ImageAttachment, AgentPlan,
 } from "@/types"
 
 /* ───────── Demo task flow data ───────── */
@@ -64,6 +64,24 @@ const DEMO_TASK_PHASES: TaskPhase[] = [
     ],
   },
 ]
+
+const DEMO_AGENT_PLAN: AgentPlan = {
+  id: "plan-research-1",
+  name: "深度研究 Agent",
+  prompt: "你是一个专业的人物背景调查研究员。你的任务是对目标人物 Ryan Kay 进行全方位的信息挖掘与分析。\n\n**目标：**\n收集 Ryan Kay（Refer.io 频道首席教育官/主持人）的所有公开联系方式、社交媒体轨迹，分析其在不同平台的活跃度，找出最有效的触达方式。\n\n**要求：**\n1. 覆盖 LinkedIn、Twitter/X、YouTube 等主流社交平台\n2. 收集邮箱、电话等直接联系方式\n3. 分析各平台发帖频率和互动数据\n4. 基于活跃度数据推荐最佳触达渠道\n5. 将最终结果格式化写入 Notion 文档",
+  steps: [
+    "通过 Google 搜索获取基础信息",
+    "抓取 LinkedIn 公开档案数据",
+    "抓取 Twitter/X 公开动态与互动",
+    "扫描 YouTube 频道与内容",
+    "交叉验证联系方式的准确性",
+    "计算各平台活跃度评分",
+    "生成触达方式推荐排序",
+    "格式化报告并写入 Notion",
+  ],
+  tools: ["Google Search", "LinkedIn Scraper", "Twitter API", "Notion API"],
+  createdAt: new Date(),
+}
 
 const DEMO_RESULT: TaskResult = {
   title: "Ryan Kay 背调报告已完成",
@@ -233,6 +251,7 @@ interface AppState {
   clarifyStep: number
   toastNotification: { title: string; desc: string; sessionId?: string } | null
   activeResult: TaskResult | null
+  activeAgentPlan: AgentPlan | null
   keyboardOpen: boolean
   permissions: Record<PermissionType, PermissionStatus>
   activePermission: PermissionType | null
@@ -264,6 +283,7 @@ interface AppState {
   deleteMessages: (ids: string[]) => void
   dismissToast: () => void
   openResultDetail: (result: TaskResult) => void
+  openAgentPlanDetail: (plan: AgentPlan) => void
   markNotificationsRead: () => void
   openProgressDetail: () => void
   setKeyboardOpen: (v: boolean) => void
@@ -301,6 +321,7 @@ export const useChatStore = create<AppState>((set, get) => ({
   clarifyStep: 0,
   toastNotification: null,
   activeResult: null,
+  activeAgentPlan: null,
   keyboardOpen: false,
   permissions: {
     network: "not-requested",
@@ -327,6 +348,7 @@ export const useChatStore = create<AppState>((set, get) => ({
   toggleAgentPin: (id) => set((s) => ({ agents: s.agents.map((a) => a.id === id ? { ...a, pinned: !a.pinned } : a) })),
   dismissToast: () => set({ toastNotification: null }),
   openResultDetail: (result) => set((s) => ({ pageView: "result-detail", activeResult: result, pageHistory: [...s.pageHistory, s.pageView] })),
+  openAgentPlanDetail: (plan) => set((s) => ({ pageView: "agent-plan-detail", activeAgentPlan: plan, pageHistory: [...s.pageHistory, s.pageView] })),
   markNotificationsRead: () => set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) })),
   openProgressDetail: () => set((s) => ({ pageView: "progress-detail", pageHistory: [...s.pageHistory, s.pageView] })),
   setKeyboardOpen: (v) => set({ keyboardOpen: v }),
@@ -409,6 +431,9 @@ export const useChatStore = create<AppState>((set, get) => ({
     }
     if (s.pageView === "result-detail") {
       // activeResult 延迟清除，避免打断退出动画
+    }
+    if (s.pageView === "agent-plan-detail") {
+      // activeAgentPlan 延迟清除
     }
     if (s.pageView === "conversation") {
       clearAllStreams()
@@ -577,7 +602,7 @@ export const useChatStore = create<AppState>((set, get) => ({
           text = "好的，我来重新执行这个任务。"
           afterAction = () => {
             const phases = DEMO_TASK_PHASES.map((p) => ({ ...p, status: "pending" as const, children: p.children?.map((c) => ({ ...c, status: "pending" as const })) }))
-            const progressMsg: ChatMessage = { id: `msg-${Date.now()}-prog-re`, role: "assistant", content: "", timestamp: new Date(), isProgressCard: true, progressPhases: phases }
+            const progressMsg: ChatMessage = { id: `msg-${Date.now()}-prog-re`, role: "assistant", content: "任务重新开始执行：", timestamp: new Date(), isProgressCard: true, progressPhases: phases }
             set((s) => ({ taskState: "executing", taskPaused: false, taskPhases: phases, messages: [...s.messages, progressMsg] }))
             startExecution(set, get)
           }
@@ -663,15 +688,28 @@ export const useChatStore = create<AppState>((set, get) => ({
         set((s) => ({ messages: [...s.messages, explainMsg] }))
         const explainText = `好的，将挖掘 Ryan Kay（Refer.io 频道首席教育官/主持人，公司 CEO 为 Ryan Kohler）的所有电话、邮箱及线上社交媒体轨迹，涵盖领英、推特等各类社交媒体。分析其在不同社交媒体上的活跃度，找出最有效的触达方式，并将最终结果写入一个 Notion 文档。\n\n本次研究大约需要 ${DEMO_BUILD_PLAN.estimatedTime}，生成好后我会主动发送给你。在此期间你可以继续发新消息或离开当前对话。`
         trackStream("explain", explainText, (t) => set((s) => ({ messages: s.messages.map((m) => m.id === explainId ? { ...m, content: t } : m) })), () => {
-          const progressMsg: ChatMessage = { id: `msg-${Date.now()}-prog`, role: "assistant", content: "", timestamp: new Date(), isProgressCard: true, progressPhases: phases }
+          const newPlan = { ...DEMO_AGENT_PLAN, createdAt: new Date() }
           set((s) => ({
             isTyping: false,
-            messages: [...s.messages.map((m) => m.id === explainId ? { ...m, isStreaming: false } : m), progressMsg],
-            taskState: "executing",
-            taskPhases: phases,
+            messages: s.messages.map((m) => m.id === explainId ? { ...m, isStreaming: false, agentPlan: newPlan } : m),
+            agents: s.agents.map((a) => a.id === "agent-research" ? {
+              ...a,
+              status: "running" as const,
+              purpose: newPlan.prompt,
+              workflow: newPlan.steps,
+            } : a),
           }))
           syncSession(get, set)
-          startExecution(set, get)
+          setTimeout(() => {
+            const progressMsg: ChatMessage = { id: `msg-${Date.now()}-prog`, role: "assistant", content: "任务开始执行，以下是实时进度：", timestamp: new Date(), isProgressCard: true, progressPhases: phases }
+            set((s) => ({
+              messages: [...s.messages, progressMsg],
+              taskState: "executing",
+              taskPhases: phases,
+            }))
+            syncSession(get, set)
+            startExecution(set, get)
+          }, 600)
         })
       }, humanDelay(500))
     }
@@ -694,17 +732,30 @@ export const useChatStore = create<AppState>((set, get) => ({
           set((s) => ({ messages: [...s.messages, goMsg] }))
           const goText = `所有授权完成！现在开始执行任务。\n\n本次研究大约需要 ${DEMO_BUILD_PLAN.estimatedTime}，生成好后我会主动发送给你。在此期间你可以继续发新消息或离开当前对话。`
           trackStream("auth-go", goText, (t) => set((s) => ({ messages: s.messages.map((m) => m.id === goId ? { ...m, content: t } : m) })), () => {
-            const progressMsg: ChatMessage = {
-              id: `msg-${Date.now()}-prog`, role: "assistant", content: "",
-              timestamp: new Date(), isProgressCard: true,
-              progressPhases: get().taskPhases,
-            }
+            const newPlan2 = { ...DEMO_AGENT_PLAN, createdAt: new Date() }
             set((s) => ({
-              messages: [...s.messages.map((m) => m.id === goId ? { ...m, isStreaming: false } : m), progressMsg],
-              taskState: "executing",
+              messages: s.messages.map((m) => m.id === goId ? { ...m, isStreaming: false, agentPlan: newPlan2 } : m),
+              agents: s.agents.map((a) => a.id === "agent-research" ? {
+                ...a,
+                status: "running" as const,
+                purpose: newPlan2.prompt,
+                workflow: newPlan2.steps,
+              } : a),
             }))
             syncSession(get, set)
-            startExecution(set, get)
+            setTimeout(() => {
+              const progressMsg: ChatMessage = {
+                id: `msg-${Date.now()}-prog`, role: "assistant", content: "任务开始执行，以下是实时进度：",
+                timestamp: new Date(), isProgressCard: true,
+                progressPhases: get().taskPhases,
+              }
+              set((s) => ({
+                messages: [...s.messages, progressMsg],
+                taskState: "executing",
+              }))
+              syncSession(get, set)
+              startExecution(set, get)
+            }, 600)
           })
         }, 400)
       }
@@ -721,7 +772,7 @@ export const useChatStore = create<AppState>((set, get) => ({
     if (remaining.length === 0) {
       setTimeout(() => {
         const goMsg: ChatMessage = { id: `msg-${Date.now()}-go2`, role: "assistant", content: "开始执行任务…", timestamp: new Date() }
-        const progressMsg: ChatMessage = { id: `msg-${Date.now()}-prog2`, role: "assistant", content: "", timestamp: new Date(), isProgressCard: true, progressPhases: get().taskPhases }
+        const progressMsg: ChatMessage = { id: `msg-${Date.now()}-prog2`, role: "assistant", content: "任务开始执行，以下是实时进度：", timestamp: new Date(), isProgressCard: true, progressPhases: get().taskPhases }
         set((s) => ({ messages: [...s.messages, goMsg, progressMsg], taskState: "executing" }))
         startExecution(set, get)
       }, 400)
@@ -947,7 +998,7 @@ function completeTask(
   get: () => AppState,
 ) {
   const resultMsg: ChatMessage = {
-    id: `msg-${Date.now()}-result`, role: "assistant", content: "",
+    id: `msg-${Date.now()}-result`, role: "assistant", content: "任务已完成，报告如下：",
     timestamp: new Date(), isResultCard: true, resultCard: DEMO_RESULT,
   }
   const nextActionMsg: ChatMessage = {

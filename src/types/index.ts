@@ -4,7 +4,7 @@ export type PermissionStatus = "not-requested" | "granted" | "denied" | "limited
 export type ChatRole = "user" | "assistant" | "system"
 export type MessageStatus = "sending" | "sent" | "failed"
 export type TabId = "agents" | "create" | "profile"
-export type PageView = "tabs" | "conversation" | "agent-detail" | "result-detail" | "progress-detail"
+export type PageView = "tabs" | "conversation" | "agent-detail" | "result-detail" | "progress-detail" | "agent-plan-detail"
 
 export type TaskPhaseStatus = "pending" | "running" | "done" | "error" | "auth-required" | "paused"
 
@@ -61,6 +61,15 @@ export interface ImageAttachment {
   height: number
 }
 
+export interface AgentPlan {
+  id: string
+  name: string
+  prompt: string
+  steps: string[]
+  tools: string[]
+  createdAt: Date
+}
+
 export interface ChatMessage {
   id: string
   role: ChatRole
@@ -75,6 +84,8 @@ export interface ChatMessage {
   resultCard?: TaskResult
   isProgressCard?: boolean
   isResultCard?: boolean
+  isAgentCard?: boolean
+  agentPlan?: AgentPlan
   nextActions?: NextAction[]
   images?: ImageAttachment[]
 }

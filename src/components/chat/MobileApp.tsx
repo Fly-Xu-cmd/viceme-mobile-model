@@ -13,7 +13,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, animate } from "
 import { cn } from "@/lib/utils"
 import { useChatStore } from "@/stores/chatStore"
 import { SkillHashGlyph } from "@/components/common/SkillHashGlyph"
-import type { ChatMessage, ChatSession, TaskPhase, TabId, ClarifyCard, BuildPlan, TaskResult, NextAction, AgentRunLog, AgentStatus, PermissionType, PermissionStatus, ImageAttachment } from "@/types"
+import type { ChatMessage, ChatSession, TaskPhase, TabId, ClarifyCard, NextAction, AgentStatus, PermissionType, PermissionStatus, ImageAttachment } from "@/types"
 
 /* ══════ Helpers ══════ */
 function RichText({ text }: { text: string }) {
@@ -210,274 +210,123 @@ function AgentDetailPage() {
   const detailAgentId = useChatStore((s) => s.detailAgentId)
   const sessions = useChatStore((s) => s.sessions)
   const taskState = useChatStore((s) => s.taskState)
-  const taskPhases = useChatStore((s) => s.taskPhases)
   const goBack = useChatStore((s) => s.goBack)
-  const openSession = useChatStore((s) => s.openSession)
   const openResultDetail = useChatStore((s) => s.openResultDetail)
-  const toggleAgentPin = useChatStore((s) => s.toggleAgentPin)
-  const [detailSheet, setDetailSheet] = useState<"purpose" | "workflow" | "checklist" | null>(null)
-  const [activeLog, setActiveLog] = useState<AgentRunLog | null>(null)
+  const [editingPlan, setEditingPlan] = useState(false)
+  const [planText, setPlanText] = useState("")
 
   const agent = agents.find((a) => a.id === detailAgentId)
+  const isRunning = agent ? (taskState === "executing" || taskState === "paused") && agent.id === "agent-research" : false
 
-  const relatedSessions = agent ? sessions.filter((s) => agent.sessions.includes(s.id)) : []
-  const isRunning = agent ? (taskState === "executing" || taskState === "paused" || taskState === "authorizing") && agent.id === "agent-research" : false
+  const latestResult = useMemo(() => {
+    if (!agent) return null
+    for (const sid of [...agent.sessions].reverse()) {
+      const sess = sessions.find((s) => s.id === sid)
+      if (sess?.taskResult) return sess.taskResult
+    }
+    return null
+  }, [agent, sessions])
 
-  const { percent, doneCount, total } = (() => {
-    if (!isRunning) return { percent: 0, doneCount: 0, total: 0 }
-    const tl = taskPhases.filter((p) => !p.authType)
-    const all: import("@/types").TaskPhase[] = []
-    tl.forEach((p) => { all.push(p); if (p.children) all.push(...p.children) })
-    const d = all.filter((p) => p.status === "done").length
-    const t = all.length
-    return { percent: t > 0 ? Math.round((d / t) * 100) : 0, doneCount: d, total: t }
-  })()
-
-  const allActivities = useMemo(() => {
-    if (!agent) return []
-    const items: { type: "log" | "session"; timestamp: Date; data: (typeof agent.runLogs)[0] | (typeof relatedSessions)[0] }[] = []
-    agent.runLogs.forEach((log) => items.push({ type: "log", timestamp: log.timestamp, data: log }))
-    relatedSessions.forEach((s) => items.push({ type: "session", timestamp: s.updatedAt, data: s }))
-    return items.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-  }, [agent, relatedSessions])
+  useEffect(() => {
+    if (agent) setPlanText(agent.purpose)
+  }, [agent])
 
   if (!agent) return null
 
+  const currentTask = agent.runLogs[0]
+  const historyTasks = agent.runLogs.slice(1)
+
   return (
-    <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 280 }} className="absolute inset-0 z-30 flex flex-col bg-[#F7F8FA]">
-      <div className="shrink-0 flex items-center justify-between px-4 pt-3 pb-2 bg-white safe-top">
-        <button onClick={goBack} className="text-slate-500"><ChevronLeft className="size-6" /></button>
-        <span className="text-[16px] font-bold text-slate-800">{agent.name}</span>
-        <button onClick={() => toggleAgentPin(agent.id)} className="active:scale-90 transition-transform">
-          <Bookmark className={cn("size-5", agent.pinned ? "text-amber-400 fill-amber-400" : "text-slate-300")} />
+    <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 280 }} className="absolute inset-0 z-30 flex flex-col bg-white">
+      <div className="shrink-0 flex items-center px-3 py-2.5 bg-white border-b border-slate-100 safe-top">
+        <button onClick={goBack} className="shrink-0 text-slate-500 mr-2"><ChevronLeft className="size-6" /></button>
+        <span className="text-[16px] font-bold text-slate-800 flex-1 truncate">{agent.name}</span>
+        <button className="flex items-center gap-1 text-slate-400 active:text-slate-600 transition-colors">
+          <Play className="size-4" />
         </button>
       </div>
+
       <div className="flex-1 overflow-y-auto scrollbar-none">
-        {/* Agent header */}
-        <div className="flex items-center gap-4 px-5 pt-5 pb-4 bg-white">
-          <SkillHashGlyph seedText={agent.id} size={56} />
-          <div className="flex-1 min-w-0">
-            <p className="text-[17px] font-bold text-slate-800">{agent.name}</p>
-            <p className="text-[13px] text-slate-400 mt-0.5">{agent.description}</p>
-            <p className="text-[11px] text-slate-400 mt-1">运行 {agent.runCount} 次</p>
-          </div>
-        </div>
+        <div className="px-5 pt-4 pb-6">
 
-        {/* Current run */}
-        {isRunning && (
-          <div className="mx-3 mt-3">
-            <p className="text-[13px] font-medium text-slate-500 mb-2 px-1">当前运行</p>
-            <div className="bg-white rounded-2xl px-4 py-3 border border-blue-100">
-              <div className="flex items-center gap-2 mb-2">
-                <Loader2 className="size-4 text-blue-500 animate-spin" />
-                <span className="text-[14px] font-semibold text-slate-700">{taskState === "paused" ? "已暂停" : "执行中"}</span>
-                <span className="text-[12px] text-slate-400 ml-auto">{percent}%</span>
+          <ScheduleReminder />
+
+          {currentTask && (
+            <button
+              onClick={() => latestResult && !isRunning && openResultDetail(latestResult)}
+              className={cn("rounded-xl border border-slate-100 bg-slate-50 overflow-hidden mb-6 w-full text-left", !isRunning && latestResult && "active:bg-slate-100 transition-colors")}
+            >
+              <div className="flex items-center gap-3 px-4 py-3">
+                {isRunning ? (
+                  <Loader2 className="size-5 text-blue-500 animate-spin shrink-0" />
+                ) : (
+                  <CheckCircle2 className="size-5 text-green-500 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[14px] font-semibold text-slate-800 truncate">{currentTask.title}</p>
+                  <p className="text-[12px] text-slate-400 mt-0.5 truncate">{currentTask.result}</p>
+                </div>
+                {!isRunning && latestResult && <ChevronRight className="size-4 text-slate-400 shrink-0" />}
               </div>
-              <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden mb-2">
-                <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${percent}%` }} />
+              <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100">
+                <span className="text-[11px] text-slate-400">{isRunning ? "正在执行…" : formatRelDate(currentTask.timestamp)}</span>
+                <span className="text-[11px] text-slate-400">{currentTask.tokenUsage} tokens</span>
               </div>
-              <p className="text-[12px] text-slate-400">{doneCount} / {total} 步骤完成</p>
-            </div>
-          </div>
-        )}
-
-        {/* Activity history - most important, first */}
-        <div className="mx-3 mt-3">
-          <p className="text-[13px] font-medium text-slate-500 mb-2 px-1">活动历史</p>
-          <div className="bg-white rounded-2xl overflow-hidden divide-y divide-slate-50">
-            {allActivities.length === 0 ? (
-              <div className="py-8 text-center text-[13px] text-slate-400">暂无运行记录</div>
-            ) : (
-              allActivities.map((item) => {
-                if (item.type === "log") {
-                  const log = item.data as AgentRunLog
-                  return (
-                    <button key={log.id} onClick={() => setActiveLog(log)} className="flex w-full items-start gap-3 px-4 py-3 active:bg-slate-50 text-left">
-                      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-green-50 mt-0.5">
-                        <CheckCircle2 className="size-3.5 text-green-500" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[13px] text-slate-700 leading-relaxed">{log.title}</p>
-                        <p className="text-[12px] text-slate-400 mt-1">{log.result}</p>
-                        <div className="flex items-center gap-3 mt-1.5">
-                          <span className="text-[11px] text-blue-500 bg-blue-50 rounded px-1.5 py-0.5">{log.taskCount}/{log.totalTasks} tasks</span>
-                          <span className="text-[11px] text-slate-400">{formatRelDate(log.timestamp)}</span>
-                          <span className="text-[11px] text-slate-400">▷ {log.tokenUsage} tokens</span>
-                        </div>
-                      </div>
-                    </button>
-                  )
-                }
-                const sess = item.data as ChatSession
-                const hasResult = !!sess.taskResult
-                return (
-                  <button key={sess.id} onClick={() => hasResult ? openResultDetail(sess.taskResult!) : openSession(sess.id)} className="flex w-full items-center gap-3 px-4 py-3 active:bg-slate-50">
-                    <div className={`flex size-6 shrink-0 items-center justify-center rounded-full ${hasResult ? "bg-green-50" : "bg-blue-50"}`}>
-                      {hasResult
-                        ? <CheckCircle2 className="size-3.5 text-green-500" />
-                        : <MessageCircle className="size-3.5 text-blue-400" />}
-                    </div>
-                    <div className="min-w-0 flex-1 text-left">
-                      <p className="text-[13px] text-slate-700 truncate">{sess.title}</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">{formatRelDate(sess.updatedAt)}</p>
-                    </div>
-                    <ChevronRight className="size-4 text-slate-400" />
-                  </button>
-                )
-              })
-            )}
-          </div>
-        </div>
-
-        {/* Info cards */}
-        <div className="mx-3 mt-3">
-          <div className="bg-white rounded-2xl overflow-hidden divide-y divide-slate-50">
-            <button onClick={() => setDetailSheet("purpose")} className="flex w-full items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors">
-              <Compass className="size-4 text-blue-500 shrink-0" />
-              <span className="text-[14px] text-slate-700 flex-1 text-left">用途</span>
-              <span className="text-[12px] text-slate-400 max-w-[140px] truncate">{agent.purpose.slice(0, 20)}…</span>
-              <ChevronRight className="size-4 text-slate-400 shrink-0 ml-1" />
             </button>
-            {agent.workflow.length > 0 && (
-              <button onClick={() => setDetailSheet("workflow")} className="flex w-full items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors">
-                <Settings className="size-4 text-purple-500 shrink-0" />
-                <span className="text-[14px] text-slate-700 flex-1 text-left">工作流</span>
-                <span className="text-[12px] text-slate-400">{agent.workflow.length} 个步骤</span>
-                <ChevronRight className="size-4 text-slate-400 shrink-0 ml-1" />
-              </button>
+          )}
+
+          <AgentDocSection
+            title="Plan"
+            level={1}
+            action={<button onClick={() => setEditingPlan(!editingPlan)} className="text-[12px] text-slate-500 font-medium active:opacity-70 transition-opacity">{editingPlan ? "完成" : "编辑"}</button>}
+          >
+            {editingPlan ? (
+              <textarea
+                value={planText}
+                onChange={(e) => setPlanText(e.target.value)}
+                className="w-full rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-[14px] text-slate-700 leading-relaxed resize-none focus:outline-none focus:border-[#4F6EF7] transition-colors"
+                rows={10}
+              />
+            ) : (
+              <ExpandableText text={planText} maxLines={5} />
             )}
-            {agent.checklist.length > 0 && (
-              <button onClick={() => setDetailSheet("checklist")} className="flex w-full items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors">
-                <CheckCircle2 className="size-4 text-green-500 shrink-0" />
-                <span className="text-[14px] text-slate-700 flex-1 text-left">检查清单</span>
-                <span className="text-[12px] text-slate-400">{agent.checklist.filter((c) => c.done).length}/{agent.checklist.length} 完成</span>
-                <ChevronRight className="size-4 text-slate-400 shrink-0 ml-1" />
-              </button>
-            )}
-          </div>
+          </AgentDocSection>
+
+          {agent.checklist.length > 0 && (
+            <CollapsibleDocSection title="检查清单" level={2} badge={`${agent.checklist.length}`}>
+              <AgentChecklist steps={agent.workflow} agentChecklist={agent.checklist} />
+            </CollapsibleDocSection>
+          )}
+
+          {agent.workflow.length > 0 && (
+            <CollapsibleDocSection title="工作流" level={2} badge={`${agent.workflow.length} 步`}>
+              <div className="space-y-2">
+                {agent.workflow.map((step, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <span className="text-[13px] text-slate-400 font-medium shrink-0 w-5 text-right">{i + 1}.</span>
+                    <span className="text-[14px] text-slate-700 leading-relaxed">{step}</span>
+                  </div>
+                ))}
+              </div>
+            </CollapsibleDocSection>
+          )}
+
+          {historyTasks.length > 0 && (
+            <CollapsibleDocSection title="历史" level={2} badge={`${historyTasks.length}`}>
+              {historyTasks.map((log) => (
+                <div key={log.id} className="flex items-start gap-3 py-1.5">
+                  <CheckCircle2 className="size-3.5 text-green-500 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] text-slate-700 leading-snug">{log.title}</p>
+                    <span className="text-[11px] text-slate-400">{formatRelDate(log.timestamp)}</span>
+                  </div>
+                </div>
+              ))}
+            </CollapsibleDocSection>
+          )}
         </div>
-
-        <div className="h-8" />
+        <div className="h-8 safe-bottom" />
       </div>
-
-      {/* Detail bottom sheet */}
-      <AnimatePresence>
-        {detailSheet && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="absolute inset-0 z-40 bg-black/40"
-            onClick={() => setDetailSheet(null)}
-          >
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="absolute inset-x-0 bottom-0 h-[60%] flex flex-col bg-white rounded-t-3xl overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="shrink-0 flex flex-col items-center pt-2.5 pb-1">
-                <div className="w-9 h-1 rounded-full bg-slate-300 mb-2" />
-                <div className="flex items-center justify-between w-full px-4">
-                  <div className="w-6" />
-                  <span className="text-[16px] font-bold text-slate-800">
-                    {detailSheet === "purpose" ? "用途" : detailSheet === "workflow" ? "工作流" : "检查清单"}
-                  </span>
-                  <button onClick={() => setDetailSheet(null)} className="text-slate-400 active:scale-90 transition-transform"><X className="size-5" /></button>
-                </div>
-              </div>
-              <div className="h-px bg-slate-100" />
-              <div className="flex-1 overflow-y-auto scrollbar-none px-5 pt-4 pb-8">
-                {detailSheet === "purpose" && (
-                  <p className="text-[14px] text-slate-700 leading-relaxed">{agent.purpose}</p>
-                )}
-                {detailSheet === "workflow" && (
-                  <div className="space-y-3">
-                    {agent.workflow.map((step, i) => (
-                      <div key={i} className="flex items-start gap-2.5">
-                        <span className="flex size-5 shrink-0 items-center justify-center rounded bg-blue-50 text-blue-500 text-[10px] font-bold mt-0.5">{i + 1}</span>
-                        <span className="text-[14px] text-slate-600">{step}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {detailSheet === "checklist" && (
-                  <div className="space-y-3">
-                    {agent.checklist.map((item, i) => (
-                      <div key={i} className="flex items-center gap-2.5">
-                        {item.done
-                          ? <CheckCircle2 className="size-4 text-green-500 shrink-0" />
-                          : <Circle className="size-4 text-slate-300 shrink-0" />}
-                        <span className={`text-[14px] ${item.done ? "text-slate-400 line-through" : "text-slate-600"}`}>{item.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Run log detail bottom sheet */}
-      <AnimatePresence>
-        {activeLog && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="absolute inset-0 z-40 bg-black/40"
-            onClick={() => setActiveLog(null)}
-          >
-            <motion.div
-              initial={{ y: "100%" }}
-              animate={{ y: 0 }}
-              exit={{ y: "100%" }}
-              transition={{ type: "spring", damping: 30, stiffness: 300 }}
-              className="absolute inset-x-0 bottom-0 top-[10%] flex flex-col bg-white rounded-t-3xl overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="shrink-0 flex flex-col items-center pt-2.5 pb-1">
-                <div className="w-9 h-1 rounded-full bg-slate-300 mb-2" />
-                <div className="flex items-center justify-between w-full px-4">
-                  <div className="w-6" />
-                  <span className="text-[16px] font-bold text-slate-800">执行结果</span>
-                  <button onClick={() => setActiveLog(null)} className="text-slate-400 active:scale-90 transition-transform"><X className="size-5" /></button>
-                </div>
-              </div>
-              <div className="h-px bg-slate-100" />
-              <div className="flex-1 overflow-y-auto scrollbar-none px-5 pt-5 pb-8">
-                <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle2 className="size-6 text-green-500 shrink-0" />
-                  <h1 className="text-[18px] font-bold text-slate-800">{activeLog.title}</h1>
-                </div>
-                <p className="text-[14px] text-slate-600 leading-relaxed mb-4">{activeLog.result}</p>
-                <div className="h-px bg-slate-100 mb-4" />
-                <div className="flex flex-wrap gap-3">
-                  <div className="flex items-center gap-1.5 bg-blue-50 rounded-lg px-3 py-2">
-                    <span className="text-[12px] text-blue-600 font-medium">{activeLog.taskCount}/{activeLog.totalTasks} tasks</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 bg-slate-50 rounded-lg px-3 py-2">
-                    <span className="text-[12px] text-slate-500">▷ {activeLog.tokenUsage} tokens</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 bg-slate-50 rounded-lg px-3 py-2">
-                    <span className="text-[12px] text-slate-500">{formatRelDate(activeLog.timestamp)}</span>
-                  </div>
-                </div>
-                {activeLog.sessionId && (
-                  <button onClick={() => { setActiveLog(null); openSession(activeLog.sessionId!) }} className="mt-6 w-full py-3 rounded-xl bg-[#4F6EF7] text-white text-[15px] font-medium active:bg-[#3D5CE5] transition-colors">
-                    查看完整对话
-                  </button>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </motion.div>
   )
 }
@@ -832,12 +681,6 @@ function MessageContextMenu({ position, onClose, containerSize }: { position: { 
 /* ── Message rendering ── */
 function MessageItem({ message, onLongPress }: { message: ChatMessage; onLongPress?: (e: React.MouseEvent | React.TouchEvent) => void }) {
   if (message.role === "system") return <SystemMsg text={message.content} />
-  if (message.clarifyCard) return <ClarifyCardUI card={message.clarifyCard} />
-  if (message.buildPlan) return <BuildPlanCard plan={message.buildPlan} content={message.content} />
-  if (message.authCards) return <AiBubble message={{ ...message, content: message.content }} onLongPress={onLongPress} />
-  if (message.isProgressCard && message.progressPhases) return <ProgressCard phases={message.progressPhases} />
-  if (message.isResultCard && message.resultCard) return <ResultCard result={message.resultCard} />
-  if (message.nextActions) return <AiBubble message={message} onLongPress={onLongPress} />
   if (message.role === "user") return <UserBubble message={message} onLongPress={onLongPress} />
   return <AiBubble message={message} onLongPress={onLongPress} />
 }
@@ -877,14 +720,170 @@ function UserBubble({ message, onLongPress }: { message: ChatMessage; onLongPres
 
 function AiBubble({ message, onLongPress }: { message: ChatMessage; onLongPress?: (e: React.MouseEvent | React.TouchEvent) => void }) {
   const lp = useLongPress(onLongPress ?? (() => {}))
+  const openAgentPlanDetail = useChatStore((s) => s.openAgentPlanDetail)
+  const openResultDetail = useChatStore((s) => s.openResultDetail)
+
+  const hasText = message.content.trim().length > 0
+  const hasAgentPlan = !!message.agentPlan
+  const hasBuildPlan = !!message.buildPlan
+  const hasClarify = !!message.clarifyCard
+  const hasProgress = message.isProgressCard && !!message.progressPhases
+  const hasResult = message.isResultCard && !!message.resultCard
 
   return (
     <div className="msg-animate px-4">
-      <div {...lp} className="rounded-2xl bg-white px-4 py-3 shadow-sm border border-slate-100 select-none">
-        <p className="text-[15px] leading-relaxed text-slate-700 whitespace-pre-line">
-          <RichText text={message.content} />
-          {message.isStreaming && <span className="inline-block w-0.5 h-4 bg-[#4F6EF7] ml-0.5 align-middle animate-pulse" />}
-        </p>
+      <div {...lp} className="rounded-2xl bg-[#f7f7f7] px-4 py-3 shadow-sm border border-slate-100 select-none">
+        {/* Text content */}
+        {hasText && (
+          <p className="text-[15px] leading-relaxed text-slate-700 whitespace-pre-line">
+            <RichText text={message.content} />
+            {message.isStreaming && <span className="inline-block w-0.5 h-4 bg-[#4F6EF7] ml-0.5 align-middle animate-pulse" />}
+          </p>
+        )}
+        {!hasText && message.isStreaming && (
+          <p className="text-[15px] leading-relaxed text-slate-700">
+            <span className="inline-block w-0.5 h-4 bg-[#4F6EF7] ml-0.5 align-middle animate-pulse" />
+          </p>
+        )}
+
+        {/* ── Embedded: Agent Plan Card ── */}
+        {hasAgentPlan && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+            className={cn("rounded-xl border border-slate-200 overflow-hidden cursor-pointer bg-white", hasText && "mt-3")}
+            onClick={() => openAgentPlanDetail(message.agentPlan!)}
+          >
+            <div className="flex items-center justify-between px-3 py-2 border-b border-slate-50">
+              <div className="flex items-center gap-1.5">
+                <BookOpen className="size-3.5 text-slate-400" />
+                <span className="text-[12px] text-slate-500 font-medium">{message.agentPlan!.name}</span>
+              </div>
+              <div className="flex items-center gap-2.5" onClick={(e) => e.stopPropagation()}>
+                <button className="text-slate-400 active:text-slate-600 transition-colors"><Copy className="size-3.5" /></button>
+                <button onClick={() => openAgentPlanDetail(message.agentPlan!)} className="text-slate-400 active:text-slate-600 transition-colors"><ExternalLink className="size-3.5" /></button>
+              </div>
+            </div>
+            <div className="relative">
+              <div className="px-3 pt-2.5 pb-6">
+                <p className="text-[12px] text-slate-600 leading-relaxed whitespace-pre-line line-clamp-4">
+                  {message.agentPlan!.prompt.split("\n").filter(Boolean).slice(0, 5).join("\n")}
+                </p>
+              </div>
+              <div className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-white via-white/90 to-transparent pointer-events-none rounded-b-xl" />
+            </div>
+            <div className="flex justify-center px-3 pb-2.5 relative z-10">
+              <span className="text-[12px] text-[#4F6EF7] font-medium">查看全文</span>
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── Embedded: Build Plan Card ── */}
+        {hasBuildPlan && (
+          <div className={cn("rounded-xl border border-slate-200 overflow-hidden bg-white", hasText && "mt-3")}>
+            <div className="px-3 pt-2.5 pb-2">
+              <p className="text-[12px] text-slate-600 leading-relaxed">{message.buildPlan!.summary}</p>
+            </div>
+            <div className="px-3 pb-2.5">
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {message.buildPlan!.services.map((s) => (
+                  <div key={s.name} className="flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5">
+                    <SkillHashGlyph seedText={s.icon} size={14} />
+                    <span className="text-[11px] text-slate-500">{s.name}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-400 mb-2">⏱ 预计 {message.buildPlan!.estimatedTime}</p>
+              <div className="space-y-1">
+                {message.buildPlan!.steps.map((step, i) => (
+                  <div key={i} className="flex items-start gap-2 text-[12px]">
+                    <span className="flex size-4.5 shrink-0 items-center justify-center rounded bg-blue-50 text-blue-500 text-[10px] font-bold mt-0.5">{i + 1}</span>
+                    <span className="text-slate-600">{step}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Embedded: Clarify Card ── */}
+        {hasClarify && !hasText && (
+          <p className="text-[15px] leading-relaxed text-slate-700">{message.clarifyCard!.question}</p>
+        )}
+
+        {/* ── Embedded: Progress Card ── */}
+        {hasProgress && (
+          <EmbeddedProgressCard phases={message.progressPhases!} hasText={hasText} />
+        )}
+
+        {/* ── Embedded: Result Card ── */}
+        {hasResult && (
+          <div className={cn("rounded-xl border border-blue-100 overflow-hidden bg-white", hasText && "mt-3")}>
+            <div className="px-3 pt-2.5 pb-2 bg-blue-50/50">
+              <div className="flex items-center gap-1.5">
+                <CheckCircle2 className="size-4 text-green-500 shrink-0" />
+                <p className="text-[13px] font-semibold text-slate-800">{message.resultCard!.title}</p>
+              </div>
+            </div>
+            <div className="px-3 py-2">
+              <p className="text-[12px] text-slate-600 leading-relaxed">{message.resultCard!.summary}</p>
+            </div>
+            <div className="flex items-center gap-2 px-3 pb-2.5">
+              <button onClick={() => openResultDetail(message.resultCard!)} className="text-[12px] text-[#4F6EF7] font-medium">查看完整内容</button>
+              {message.resultCard!.link && (
+                <a href={message.resultCard!.link.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[12px] text-[#4F6EF7] font-medium ml-auto">
+                  <ExternalLink className="size-3" /> {message.resultCard!.link.label}
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function EmbeddedProgressCard({ phases, hasText }: { phases: TaskPhase[]; hasText: boolean }) {
+  const taskState = useChatStore((s) => s.taskState)
+  const stopTask = useChatStore((s) => s.stopTask)
+  const resumeTask = useChatStore((s) => s.resumeTask)
+  const openProgressDetail = useChatStore((s) => s.openProgressDetail)
+  const { topLevel, percent } = useTaskProgress(phases)
+  const canToggle = taskState === "executing" || taskState === "paused"
+
+  return (
+    <div className={cn("rounded-xl border border-slate-200 overflow-hidden bg-white", hasText && "mt-3")}>
+      <div className="flex w-full items-center justify-between px-3 pt-2.5 pb-1.5">
+        <button onClick={openProgressDetail} className="flex items-center gap-1.5 flex-1 min-w-0">
+          {taskState === "executing" && <Loader2 className="size-3.5 text-blue-500 animate-spin shrink-0" />}
+          {taskState === "completed" && <CheckCircle2 className="size-3.5 text-green-500 shrink-0" />}
+          {taskState === "paused" && <Pause className="size-3.5 text-amber-500 shrink-0" />}
+          <span className="text-[13px] font-semibold text-slate-700">
+            {taskState === "completed" ? "执行完成" : taskState === "paused" ? "已暂停" : "执行中…"}
+          </span>
+          <span className="text-[11px] text-slate-400 ml-auto mr-1">{percent}%</span>
+          <ChevronRight className="size-3.5 text-slate-400 shrink-0" />
+        </button>
+        {canToggle && (
+          <button
+            onClick={(e) => { e.stopPropagation(); taskState === "executing" ? stopTask() : resumeTask() }}
+            className="flex size-6 items-center justify-center rounded-full ml-1.5 shrink-0 active:bg-slate-100 transition-colors border border-slate-200"
+          >
+            {taskState === "executing" ? <Pause className="size-2.5 text-slate-500" /> : <Play className="size-2.5 text-slate-500" />}
+          </button>
+        )}
+      </div>
+      <div className="mx-3 mb-2 h-1 rounded-full bg-slate-100 overflow-hidden">
+        <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${percent}%` }} />
+      </div>
+      <div className="px-3 pb-2.5 space-y-0.5">
+        {topLevel.slice(0, 3).map((phase) => <PhaseItem key={phase.id} phase={phase} />)}
+        {topLevel.length > 3 && (
+          <button onClick={openProgressDetail} className="text-[11px] text-[#4F6EF7] font-medium py-0.5">
+            查看全部 {topLevel.length} 个步骤
+          </button>
+        )}
       </div>
     </div>
   )
@@ -900,50 +899,6 @@ function TypingDots() {
   )
 }
 
-/* ── Clarify Card (inline in messages - simplified) ── */
-function ClarifyCardUI({ card }: { card: ClarifyCard }) {
-  return (
-    <div className="msg-animate px-4">
-      <div className="rounded-2xl bg-white px-4 py-3 shadow-sm border border-slate-100">
-        <p className="text-[15px] leading-relaxed text-slate-700">{card.question}</p>
-      </div>
-    </div>
-  )
-}
-
-/* ── Build Plan Card ── */
-function BuildPlanCard({ plan, content }: { plan: BuildPlan; content: string }) {
-  return (
-    <div className="msg-animate px-4">
-      <p className="text-[14px] text-slate-600 mb-2">{content}</p>
-      <div className="rounded-2xl bg-white shadow-sm border border-slate-100 overflow-hidden">
-        <div className="px-4 pt-3 pb-2">
-          <p className="text-[13px] text-slate-600 leading-relaxed">{plan.summary}</p>
-        </div>
-        <div className="px-4 pb-3">
-          <div className="flex flex-wrap gap-2 mb-3">
-            {plan.services.map((s) => (
-              <div key={s.name} className="flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1">
-                <SkillHashGlyph seedText={s.icon} size={16} />
-                <span className="text-[11px] text-slate-500">{s.name}</span>
-              </div>
-            ))}
-          </div>
-          <p className="text-[12px] text-slate-400 mb-2">⏱ 预计 {plan.estimatedTime}</p>
-          <div className="space-y-1">
-            {plan.steps.map((step, i) => (
-              <div key={i} className="flex items-start gap-2 text-[13px]">
-                <span className="flex size-5 shrink-0 items-center justify-center rounded bg-blue-50 text-blue-500 text-[10px] font-bold mt-0.5">{i + 1}</span>
-                <span className="text-slate-600">{step}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 /* ── Progress Card ── */
 function useTaskProgress(phases: TaskPhase[]) {
   return useMemo(() => {
@@ -954,54 +909,6 @@ function useTaskProgress(phases: TaskPhase[]) {
     const total = allItems.length
     return { topLevel, doneCount, total, percent: total > 0 ? Math.round((doneCount / total) * 100) : 0 }
   }, [phases])
-}
-
-function ProgressCard({ phases }: { phases: TaskPhase[] }) {
-  const taskState = useChatStore((s) => s.taskState)
-  const stopTask = useChatStore((s) => s.stopTask)
-  const resumeTask = useChatStore((s) => s.resumeTask)
-  const openProgressDetail = useChatStore((s) => s.openProgressDetail)
-
-  const { topLevel, percent } = useTaskProgress(phases)
-  const canToggle = taskState === "executing" || taskState === "paused"
-
-  return (
-    <div className="msg-animate px-4">
-      <div className="rounded-2xl bg-white shadow-sm border border-slate-100 overflow-hidden">
-        <div className="flex w-full items-center justify-between px-4 pt-3 pb-2">
-          <button onClick={openProgressDetail} className="flex items-center gap-2 flex-1 min-w-0">
-            {taskState === "executing" && <Loader2 className="size-4 text-blue-500 animate-spin shrink-0" />}
-            {taskState === "completed" && <CheckCircle2 className="size-4 text-green-500 shrink-0" />}
-            {taskState === "paused" && <Pause className="size-4 text-amber-500 shrink-0" />}
-            <span className="text-[14px] font-semibold text-slate-700">
-              {taskState === "completed" ? "执行完成" : taskState === "paused" ? "已暂停" : "执行中…"}
-            </span>
-            <span className="text-[12px] text-slate-400 ml-auto mr-1">{percent}%</span>
-            <ChevronRight className="size-4 text-slate-400 shrink-0" />
-          </button>
-          {canToggle && (
-            <button
-              onClick={(e) => { e.stopPropagation(); taskState === "executing" ? stopTask() : resumeTask() }}
-              className="flex size-7 items-center justify-center rounded-full ml-2 shrink-0 active:bg-slate-100 transition-colors border border-slate-200"
-            >
-              {taskState === "executing" ? <Pause className="size-3 text-slate-500" /> : <Play className="size-3 text-slate-500" />}
-            </button>
-          )}
-        </div>
-        <div className="mx-4 mb-3 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${percent}%` }} />
-        </div>
-        <div className="px-4 pb-3 space-y-1">
-          {topLevel.slice(0, 3).map((phase) => <PhaseItem key={phase.id} phase={phase} />)}
-          {topLevel.length > 3 && (
-            <button onClick={openProgressDetail} className="text-[12px] text-[#4F6EF7] font-medium py-1">
-              查看全部 {topLevel.length} 个步骤
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  )
 }
 
 function PhaseItem({ phase, depth = 0 }: { phase: TaskPhase; depth?: number }) {
@@ -1026,38 +933,7 @@ function PhaseItem({ phase, depth = 0 }: { phase: TaskPhase; depth?: number }) {
   )
 }
 
-/* ── Result Card (summary in chat, tap to open full page) ── */
-function ResultCard({ result }: { result: TaskResult }) {
-  const openResultDetail = useChatStore((s) => s.openResultDetail)
-
-  return (
-    <div className="msg-animate px-4">
-      <div className="rounded-2xl bg-white shadow-sm border border-blue-100 overflow-hidden">
-        <div className="px-4 pt-3 pb-2 bg-blue-50/50">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="size-5 text-green-500 shrink-0" />
-            <p className="text-[15px] font-semibold text-slate-800">{result.title}</p>
-          </div>
-        </div>
-        <div className="px-4 py-3">
-          <p className="text-[13px] text-slate-600 leading-relaxed">{result.summary}</p>
-        </div>
-        <div className="flex items-center gap-2 px-4 pb-3">
-          <button onClick={() => openResultDetail(result)} className="text-[13px] text-[#4F6EF7] font-medium">
-            查看完整内容
-          </button>
-          {result.link && (
-            <a href={result.link.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[13px] text-[#4F6EF7] font-medium ml-auto">
-              <ExternalLink className="size-3.5" /> {result.link.label}
-            </a>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ── Result Detail Page (bottom sheet modal with drag-to-dismiss) ── */
+/* ── Result Detail Page (push from right) ── */
 function ResultDetailPage() {
   const activeResult = useChatStore((s) => s.activeResult)
   const goBack = useChatStore((s) => s.goBack)
@@ -1065,54 +941,374 @@ function ResultDetailPage() {
   if (!activeResult) return null
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      className="absolute inset-0 z-40 bg-black/40"
-      onClick={goBack}
-    >
-      <motion.div
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        exit={{ y: "100%" }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
-        className="absolute inset-x-0 bottom-0 top-[8%] flex flex-col bg-white rounded-t-3xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="shrink-0 flex flex-col items-center pt-2.5 pb-1">
-          <div className="w-9 h-1 rounded-full bg-slate-300 mb-2" />
-          <div className="flex items-center justify-between w-full px-4">
-            <div className="w-6" />
-            <span className="text-[16px] font-bold text-slate-800">报告详情</span>
-            <button onClick={goBack} className="text-slate-400 active:scale-90 transition-transform"><X className="size-5" /></button>
+    <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 280 }} className="absolute inset-0 z-40 flex flex-col bg-white">
+      <div className="shrink-0 flex items-center px-3 py-2.5 bg-white border-b border-slate-100 safe-top">
+        <button onClick={goBack} className="shrink-0 text-slate-500 mr-2"><ChevronLeft className="size-6" /></button>
+        <span className="text-[16px] font-bold text-slate-800 flex-1">报告详情</span>
+        <div className="w-6" />
+      </div>
+      <div className="flex-1 overflow-y-auto scrollbar-none">
+        <div className="px-5 pt-5 pb-3">
+          <div className="flex items-center gap-2 mb-3">
+            <CheckCircle2 className="size-6 text-green-500 shrink-0" />
+            <h1 className="text-[18px] font-bold text-slate-800">{activeResult.title}</h1>
+          </div>
+          <p className="text-[14px] text-slate-600 leading-relaxed mb-4">{activeResult.summary}</p>
+          <div className="h-px bg-slate-100 mb-4" />
+          <div className="text-[15px] text-slate-700 leading-relaxed whitespace-pre-line">
+            <RichText text={activeResult.detail} />
           </div>
         </div>
-        <div className="h-px bg-slate-100" />
-        <div className="flex-1 overflow-y-auto scrollbar-none">
-          <div className="px-5 pt-5 pb-3">
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle2 className="size-6 text-green-500 shrink-0" />
-              <h1 className="text-[18px] font-bold text-slate-800">{activeResult.title}</h1>
-            </div>
-            <p className="text-[14px] text-slate-600 leading-relaxed mb-4">{activeResult.summary}</p>
-            <div className="h-px bg-slate-100 mb-4" />
-            <div className="text-[15px] text-slate-700 leading-relaxed whitespace-pre-line">
-              <RichText text={activeResult.detail} />
-            </div>
+        {activeResult.link && (
+          <div className="px-5 pb-6 pt-2">
+            <a href={activeResult.link.url} target="_blank" rel="noopener noreferrer"
+              className="flex w-full items-center justify-center gap-2 py-3 rounded-xl bg-[#4F6EF7] text-white text-[15px] font-medium active:bg-[#3D5CE5] transition-colors">
+              <ExternalLink className="size-4" /> {activeResult.link.label}
+            </a>
           </div>
-          {activeResult.link && (
-            <div className="px-5 pb-6 pt-2">
-              <a href={activeResult.link.url} target="_blank" rel="noopener noreferrer"
-                className="flex w-full items-center justify-center gap-2 py-3 rounded-xl bg-[#4F6EF7] text-white text-[15px] font-medium active:bg-[#3D5CE5] transition-colors">
-                <ExternalLink className="size-4" /> {activeResult.link.label}
-              </a>
+        )}
+        <div className="h-8 safe-bottom" />
+      </div>
+    </motion.div>
+  )
+}
+
+/* ── Agent Plan Detail Page (full-screen bottom sheet) ── */
+function AgentDocSection({ title, level = 1, action, children }: { title: string; level?: 1 | 2; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="mb-5">
+      <div className="flex items-center justify-between mb-2.5">
+        {level === 1 ? (
+          <h2 className="text-[16px] font-bold text-slate-800">{title}</h2>
+        ) : (
+          <h3 className="text-[14px] font-semibold text-slate-700">{title}</h3>
+        )}
+        {action}
+      </div>
+      {children}
+      <div className="h-px bg-slate-100 mt-5" />
+    </div>
+  )
+}
+
+function ExpandableText({ text, maxLines }: { text: string; maxLines: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const lines = text.split("\n").filter(Boolean)
+  const needsExpand = lines.length > maxLines
+
+  return (
+    <div>
+      <div className="relative">
+        <p className={cn("text-[14px] text-slate-700 leading-[1.75] whitespace-pre-line", !expanded && needsExpand && `line-clamp-${maxLines}`)}>
+          <RichText text={expanded ? text : lines.slice(0, maxLines).join("\n")} />
+        </p>
+        {needsExpand && !expanded && (
+          <div className="absolute inset-x-0 bottom-0 h-14 bg-gradient-to-t from-white via-white/80 to-transparent pointer-events-none" />
+        )}
+      </div>
+      {needsExpand && (
+        <button onClick={() => setExpanded(!expanded)} className="text-[12px] text-slate-500 font-medium mt-2 active:opacity-70 transition-opacity">
+          {expanded ? "收起" : "展开全文"}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function ScheduleReminder() {
+  const [showPicker, setShowPicker] = useState(false)
+  const [scheduled, setScheduled] = useState<Date | null>(null)
+  const [pickerDate, setPickerDate] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    d.setHours(9, 0, 0, 0)
+    return d
+  })
+  const [pickerMonth, setPickerMonth] = useState(() => new Date())
+
+  const formatSchedule = (d: Date) => {
+    const now = new Date()
+    const diff = d.getTime() - now.getTime()
+    const days = Math.floor(diff / 86400_000)
+    const h = String(d.getHours()).padStart(2, "0")
+    const m = String(d.getMinutes()).padStart(2, "0")
+    if (days === 0) return `今天 ${h}:${m}`
+    if (days === 1) return `明天 ${h}:${m}`
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${h}:${m}`
+  }
+
+  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate()
+  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay()
+
+  const handleConfirm = () => {
+    setScheduled(pickerDate)
+    setShowPicker(false)
+  }
+
+  const isSameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+
+  const calendarDays = useMemo(() => {
+    const y = pickerMonth.getFullYear()
+    const mo = pickerMonth.getMonth()
+    const total = daysInMonth(y, mo)
+    const offset = firstDayOfMonth(y, mo)
+    const days: (number | null)[] = Array.from({ length: offset }, () => null)
+    for (let d = 1; d <= total; d++) days.push(d)
+    return days
+  }, [pickerMonth])
+
+  return (
+    <>
+      <button onClick={() => setShowPicker(true)} className="flex items-center gap-1.5 mb-4 active:opacity-70 transition-opacity">
+        <span className="text-[14px] text-blue-500 font-medium">
+          @{scheduled ? formatSchedule(scheduled) : "设置定时执行"}
+        </span>
+        <svg className="size-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+        </svg>
+      </button>
+
+      <AnimatePresence>
+        {showPicker && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/40"
+            onClick={() => setShowPicker(false)}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 28, stiffness: 280 }}
+              className="w-full bg-white rounded-t-2xl px-5 pt-4 pb-6 safe-bottom"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-[16px] font-bold text-slate-800">设置定时任务</span>
+                <button onClick={() => setShowPicker(false)} className="text-slate-400"><X className="size-5" /></button>
+              </div>
+
+              {/* Month nav */}
+              <div className="flex items-center justify-between mb-3">
+                <button onClick={() => setPickerMonth(new Date(pickerMonth.getFullYear(), pickerMonth.getMonth() - 1))} className="text-slate-400 active:text-slate-600"><ChevronLeft className="size-5" /></button>
+                <span className="text-[15px] font-semibold text-slate-700">{pickerMonth.getFullYear()}年{pickerMonth.getMonth() + 1}月</span>
+                <button onClick={() => setPickerMonth(new Date(pickerMonth.getFullYear(), pickerMonth.getMonth() + 1))} className="text-slate-400 active:text-slate-600"><ChevronRight className="size-5" /></button>
+              </div>
+
+              {/* Week header */}
+              <div className="grid grid-cols-7 gap-1 mb-1">
+                {["日", "一", "二", "三", "四", "五", "六"].map((d) => (
+                  <span key={d} className="text-center text-[12px] text-slate-400 py-1">{d}</span>
+                ))}
+              </div>
+
+              {/* Calendar grid */}
+              <div className="grid grid-cols-7 gap-1 mb-4">
+                {calendarDays.map((day, idx) => {
+                  if (day === null) return <div key={idx} />
+                  const date = new Date(pickerMonth.getFullYear(), pickerMonth.getMonth(), day)
+                  const isSelected = isSameDay(date, pickerDate)
+                  const isToday = isSameDay(date, new Date())
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => setPickerDate(new Date(pickerMonth.getFullYear(), pickerMonth.getMonth(), day, pickerDate.getHours(), pickerDate.getMinutes()))}
+                      className={cn(
+                        "flex items-center justify-center h-9 rounded-lg text-[14px] transition-colors",
+                        isSelected ? "bg-blue-500 text-white" : isToday ? "bg-blue-50 text-blue-600 font-medium" : "text-slate-700 active:bg-slate-100",
+                      )}
+                    >
+                      {day}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Time selector */}
+              <div className="flex items-center gap-3 mb-5">
+                <span className="text-[14px] text-slate-600">时间</span>
+                <input
+                  type="time"
+                  value={`${String(pickerDate.getHours()).padStart(2, "0")}:${String(pickerDate.getMinutes()).padStart(2, "0")}`}
+                  onChange={(e) => {
+                    const [h, m] = e.target.value.split(":").map(Number)
+                    setPickerDate(new Date(pickerDate.getFullYear(), pickerDate.getMonth(), pickerDate.getDate(), h, m))
+                  }}
+                  className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-[14px] text-slate-700 focus:outline-none focus:border-blue-400"
+                />
+              </div>
+
+              <button onClick={handleConfirm} className="w-full py-3 rounded-xl bg-slate-900 text-white text-[15px] font-semibold active:bg-slate-800 transition-colors">
+                确认
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
+function CollapsibleDocSection({ title, level = 2, badge, children, defaultOpen = false }: { title: string; level?: 1 | 2; badge?: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="mb-5">
+      <button onClick={() => setOpen(!open)} className="flex items-center justify-between w-full mb-2.5 active:opacity-70 transition-opacity">
+        <div className="flex items-center gap-2">
+          {level === 1 ? (
+            <h2 className="text-[16px] font-bold text-slate-800">{title}</h2>
+          ) : (
+            <h3 className="text-[14px] font-semibold text-slate-700">{title}</h3>
+          )}
+          {badge && <span className="text-[11px] text-slate-400">{badge}</span>}
+        </div>
+        <ChevronDown className={cn("size-4 text-slate-400 transition-transform duration-200", open && "rotate-180")} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <div className="h-px bg-slate-100 mt-5" />
+    </div>
+  )
+}
+
+function AgentChecklist({ steps, agentChecklist }: { steps: string[]; agentChecklist?: { label: string; done: boolean }[] }) {
+  const items = agentChecklist && agentChecklist.length > 0
+    ? agentChecklist
+    : steps.map((s) => ({ label: s, done: false }))
+
+  return (
+    <div className="space-y-1.5">
+      {items.map((item, i) => (
+        <div key={i} className="flex items-start gap-2.5 py-1">
+          <div className={cn(
+            "flex size-[18px] shrink-0 items-center justify-center rounded border-[1.5px] mt-0.5",
+            item.done ? "bg-[#4F6EF7] border-[#4F6EF7]" : "border-slate-300",
+          )}>
+            {item.done && <Check className="size-3 text-white" strokeWidth={3} />}
+          </div>
+          <span className={cn("text-[14px] leading-relaxed", item.done ? "text-slate-400 line-through" : "text-slate-700")}>{item.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AgentPlanDetailPage() {
+  const activeAgentPlan = useChatStore((s) => s.activeAgentPlan)
+  const goBack = useChatStore((s) => s.goBack)
+  const agents = useChatStore((s) => s.agents)
+  const taskState = useChatStore((s) => s.taskState)
+  const [editingPlan, setEditingPlan] = useState(false)
+  const [planText, setPlanText] = useState("")
+
+  const agent = agents.find((a) => a.id === "agent-research")
+  const isRunning = taskState === "executing"
+
+  useEffect(() => {
+    if (activeAgentPlan) setPlanText(activeAgentPlan.prompt)
+  }, [activeAgentPlan])
+
+  if (!activeAgentPlan) return null
+
+  const currentTask = agent?.runLogs[0]
+  const historyTasks = agent?.runLogs.slice(1) ?? []
+
+  return (
+    <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 280 }} className="absolute inset-0 z-40 flex flex-col bg-white">
+      {/* Header */}
+      <div className="shrink-0 flex items-center px-3 py-2.5 bg-white border-b border-slate-100 safe-top">
+        <button onClick={goBack} className="shrink-0 text-slate-500 mr-2"><ChevronLeft className="size-6" /></button>
+        <span className="text-[16px] font-bold text-slate-800 flex-1 truncate">{activeAgentPlan.name}</span>
+        <button className="flex items-center gap-1 text-slate-400 active:text-slate-600 transition-colors">
+          <Play className="size-4" />
+        </button>
+      </div>
+
+      {/* Document body */}
+      <div className="flex-1 overflow-y-auto scrollbar-none">
+        <div className="px-5 pt-4 pb-6">
+
+          {/* Schedule reminder */}
+          <ScheduleReminder />
+
+          {/* Current task card */}
+          {currentTask && (
+            <div className="rounded-xl border border-slate-100 bg-slate-50 overflow-hidden mb-6">
+              <div className="flex items-center gap-3 px-4 py-3">
+                {isRunning ? (
+                  <Loader2 className="size-5 text-blue-500 animate-spin shrink-0" />
+                ) : (
+                  <CheckCircle2 className="size-5 text-green-500 shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-[14px] font-semibold text-slate-800 truncate">{currentTask.title}</p>
+                  <p className="text-[12px] text-slate-400 mt-0.5 truncate">{currentTask.result}</p>
+                </div>
+              </div>
+              <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100">
+                <span className="text-[11px] text-slate-400">{isRunning ? "正在执行…" : formatRelDate(currentTask.timestamp)}</span>
+                <span className="text-[11px] text-slate-400">{currentTask.tokenUsage} tokens</span>
+              </div>
             </div>
           )}
-          <div className="h-8 safe-bottom" />
+
+          {/* H1: Plan */}
+          <AgentDocSection
+            title="Plan"
+            level={1}
+            action={<button onClick={() => setEditingPlan(!editingPlan)} className="text-[12px] text-slate-500 font-medium active:opacity-70 transition-opacity">{editingPlan ? "完成" : "编辑"}</button>}
+          >
+            {editingPlan ? (
+              <textarea
+                value={planText}
+                onChange={(e) => setPlanText(e.target.value)}
+                className="w-full rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-[14px] text-slate-700 leading-relaxed resize-none focus:outline-none focus:border-[#4F6EF7] transition-colors"
+                rows={10}
+              />
+            ) : (
+              <ExpandableText text={planText} maxLines={5} />
+            )}
+          </AgentDocSection>
+
+          {/* H2: Checklist (collapsible) */}
+          <CollapsibleDocSection title="检查清单" level={2} badge={`${(agent?.checklist ?? activeAgentPlan.steps).length}`}>
+            <AgentChecklist steps={activeAgentPlan.steps} agentChecklist={agent?.checklist} />
+          </CollapsibleDocSection>
+
+          {/* H2: Tools (collapsible) */}
+          {activeAgentPlan.tools.length > 0 && (
+            <CollapsibleDocSection title="工具" level={2} badge={`${activeAgentPlan.tools.length}`}>
+              <div className="flex flex-wrap gap-2">
+                {activeAgentPlan.tools.map((tool) => (
+                  <span key={tool} className="text-[13px] text-slate-600 bg-slate-50 rounded-md px-2.5 py-1">{tool}</span>
+                ))}
+              </div>
+            </CollapsibleDocSection>
+          )}
+
+          {/* H2: History (collapsible) */}
+          {historyTasks.length > 0 && (
+            <CollapsibleDocSection title="历史" level={2} badge={`${historyTasks.length}`}>
+              {historyTasks.map((log) => (
+                <div key={log.id} className="flex items-start gap-3 py-1.5">
+                  <CheckCircle2 className="size-3.5 text-green-500 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] text-slate-700 leading-snug">{log.title}</p>
+                    <span className="text-[11px] text-slate-400">{formatRelDate(log.timestamp)}</span>
+                  </div>
+                </div>
+              ))}
+            </CollapsibleDocSection>
+          )}
         </div>
-      </motion.div>
+      </div>
     </motion.div>
   )
 }
@@ -1129,68 +1325,48 @@ function ProgressDetailPage() {
   const canToggle = taskState === "executing" || taskState === "paused"
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      className="absolute inset-0 z-40 bg-black/40"
-      onClick={goBack}
-    >
-      <motion.div
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        exit={{ y: "100%" }}
-        transition={{ type: "spring", damping: 30, stiffness: 300 }}
-        className="absolute inset-x-0 bottom-0 top-[12%] flex flex-col bg-white rounded-t-3xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="shrink-0 flex flex-col items-center pt-2.5 pb-1">
-          <div className="w-9 h-1 rounded-full bg-slate-300 mb-2" />
-          <div className="flex items-center justify-between w-full px-4">
-            <div className="w-6" />
-            <span className="text-[16px] font-bold text-slate-800">执行详情</span>
-            <button onClick={goBack} className="text-slate-400 active:scale-90 transition-transform"><X className="size-5" /></button>
+    <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 280 }} className="absolute inset-0 z-40 flex flex-col bg-white">
+      <div className="shrink-0 flex items-center px-3 py-2.5 bg-white border-b border-slate-100 safe-top">
+        <button onClick={goBack} className="shrink-0 text-slate-500 mr-2"><ChevronLeft className="size-6" /></button>
+        <span className="text-[16px] font-bold text-slate-800 flex-1">执行详情</span>
+        <div className="w-6" />
+      </div>
+      <div className="flex-1 overflow-y-auto scrollbar-none">
+        <div className="px-5 pt-5 pb-3">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                {taskState === "executing" && <Loader2 className="size-5 text-blue-500 animate-spin" />}
+                {taskState === "completed" && <CheckCircle2 className="size-5 text-green-500" />}
+                {taskState === "paused" && <Pause className="size-5 text-amber-500" />}
+                <span className="text-[18px] font-bold text-slate-800">
+                  {taskState === "completed" ? "任务完成" : taskState === "paused" ? "已暂停" : "执行中"}
+                </span>
+              </div>
+              <p className="text-[13px] text-slate-400 mt-1">{doneCount} / {total} 步骤完成</p>
+            </div>
+            <div className="text-right">
+              <span className="text-[24px] font-bold text-slate-800">{percent}%</span>
+            </div>
+          </div>
+          <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-6">
+            <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${percent}%` }} />
+          </div>
+          <div className="space-y-2">
+            {topLevel.map((phase) => <PhaseItem key={phase.id} phase={phase} />)}
           </div>
         </div>
-        <div className="h-px bg-slate-100" />
-        <div className="flex-1 overflow-y-auto scrollbar-none">
-          <div className="px-5 pt-5 pb-3">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  {taskState === "executing" && <Loader2 className="size-5 text-blue-500 animate-spin" />}
-                  {taskState === "completed" && <CheckCircle2 className="size-5 text-green-500" />}
-                  {taskState === "paused" && <Pause className="size-5 text-amber-500" />}
-                  <span className="text-[18px] font-bold text-slate-800">
-                    {taskState === "completed" ? "任务完成" : taskState === "paused" ? "已暂停" : "执行中"}
-                  </span>
-                </div>
-                <p className="text-[13px] text-slate-400 mt-1">{doneCount} / {total} 步骤完成</p>
-              </div>
-              <div className="text-right">
-                <span className="text-[24px] font-bold text-slate-800">{percent}%</span>
-              </div>
-            </div>
-            <div className="h-2 rounded-full bg-slate-100 overflow-hidden mb-6">
-              <div className="h-full rounded-full bg-blue-500 transition-all duration-500" style={{ width: `${percent}%` }} />
-            </div>
-            <div className="space-y-2">
-              {topLevel.map((phase) => <PhaseItem key={phase.id} phase={phase} />)}
-            </div>
-          </div>
+      </div>
+      {canToggle && (
+        <div className="shrink-0 px-5 pb-5 pt-3 border-t border-slate-100 safe-bottom">
+          <button
+            onClick={taskState === "executing" ? stopTask : resumeTask}
+            className={`w-full py-3 rounded-xl text-[15px] font-semibold transition-all active:scale-[0.98] ${taskState === "executing" ? "bg-amber-50 text-amber-600 active:bg-amber-100" : "bg-blue-50 text-[#4F6EF7] active:bg-blue-100"}`}
+          >
+            {taskState === "executing" ? "暂停执行" : "恢复执行"}
+          </button>
         </div>
-        {canToggle && (
-          <div className="shrink-0 px-5 pb-5 pt-3 border-t border-slate-100 safe-bottom">
-            <button
-              onClick={taskState === "executing" ? stopTask : resumeTask}
-              className={`w-full py-3 rounded-xl text-[15px] font-semibold transition-all active:scale-[0.98] ${taskState === "executing" ? "bg-amber-50 text-amber-600 active:bg-amber-100" : "bg-blue-50 text-[#4F6EF7] active:bg-blue-100"}`}
-            >
-              {taskState === "executing" ? "暂停执行" : "恢复执行"}
-            </button>
-          </div>
-        )}
-      </motion.div>
+      )}
     </motion.div>
   )
 }
@@ -2712,10 +2888,12 @@ export function MobileApp() {
     }
   }, [activeTab])
 
-  const isOverlay = pageView === "result-detail" || pageView === "progress-detail"
-  const basePage = isOverlay ? (pageHistory[pageHistory.length - 1] ?? "tabs") : pageView
-  const showConversation = basePage === "conversation"
-  const showAgentDetail = basePage === "agent-detail"
+  const visiblePages = new Set([pageView, ...pageHistory])
+  const showConversation = visiblePages.has("conversation")
+  const showAgentDetail = visiblePages.has("agent-detail")
+  const showResultDetail = visiblePages.has("result-detail")
+  const showProgressDetail = visiblePages.has("progress-detail")
+  const showAgentPlanDetail = visiblePages.has("agent-plan-detail")
 
   return (
     <div className="relative flex h-full flex-col bg-[#F7F8FA] overflow-hidden">
@@ -2724,11 +2902,12 @@ export function MobileApp() {
         <AnimatePresence>
           {showConversation && <ConversationPage key="conversation" />}
           {showAgentDetail && <AgentDetailPage key="agent-detail" />}
+          {showResultDetail && <ResultDetailPage key="result-detail" />}
+          {showProgressDetail && <ProgressDetailPage key="progress-detail" />}
+          {showAgentPlanDetail && <AgentPlanDetailPage key="agent-plan-detail" />}
         </AnimatePresence>
       </div>
       {!keyboardOpen && <TabBar />}
-      <AnimatePresence onExitComplete={() => useChatStore.getState().activeResult && useChatStore.setState({ activeResult: null })}>{pageView === "result-detail" && <ResultDetailPage key="result-detail" />}</AnimatePresence>
-      <AnimatePresence>{pageView === "progress-detail" && <ProgressDetailPage key="progress-detail" />}</AnimatePresence>
       <AnimatePresence>{showFirstLoginPage && <LoginFullPage key="login-full" />}</AnimatePresence>
       <AnimatePresence>{showLogin && !showFirstLoginPage && <LoginSheet key="login-sheet" />}</AnimatePresence>
       <AnimatePresence>{toast && <ToastNotification />}</AnimatePresence>
