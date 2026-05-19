@@ -13,7 +13,7 @@ import { AnimatePresence, motion, useMotionValue, useTransform, animate } from "
 import { cn } from "@/lib/utils"
 import { useChatStore } from "@/stores/chatStore"
 import { SkillHashGlyph } from "@/components/common/SkillHashGlyph"
-import type { ChatMessage, ChatSession, TaskPhase, TabId, ClarifyCard, NextAction, AgentStatus, PermissionType, PermissionStatus, ImageAttachment } from "@/types"
+import type { ChatMessage, ChatSession, TaskPhase, TabId, ClarifyCard, NextAction, AgentStatus, PermissionType, PermissionStatus, ImageAttachment, AgentRunLog, TaskResult } from "@/types"
 
 /* ══════ Helpers ══════ */
 function RichText({ text }: { text: string }) {
@@ -28,6 +28,17 @@ function formatRelDate(d: Date) {
   if (days === 1) return "昨天"
   if (days < 7) return `${days}天前`
   return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function runLogToResult(log: AgentRunLog, sessions: ChatSession[]): TaskResult {
+  const sess = log.sessionId ? sessions.find((s) => s.id === log.sessionId) : undefined
+  if (sess?.taskResult) return sess.taskResult
+  return {
+    title: log.title,
+    summary: log.result,
+    detail: `**任务结果**\n${log.result}\n\n**完成度**\n${log.taskCount}/${log.totalTasks} 步骤\n\n**Token 消耗**\n${log.tokenUsage} tokens`,
+    completedAt: log.timestamp,
+  }
 }
 
 /* ══════ Tab Bar ══════ */
@@ -218,15 +229,6 @@ function AgentDetailPage() {
   const agent = agents.find((a) => a.id === detailAgentId)
   const isRunning = agent ? (taskState === "executing" || taskState === "paused") && agent.id === "agent-research" : false
 
-  const latestResult = useMemo(() => {
-    if (!agent) return null
-    for (const sid of [...agent.sessions].reverse()) {
-      const sess = sessions.find((s) => s.id === sid)
-      if (sess?.taskResult) return sess.taskResult
-    }
-    return null
-  }, [agent, sessions])
-
   useEffect(() => {
     if (agent) setPlanText(agent.purpose)
   }, [agent])
@@ -253,8 +255,8 @@ function AgentDetailPage() {
 
           {currentTask && (
             <button
-              onClick={() => latestResult && !isRunning && openResultDetail(latestResult)}
-              className={cn("rounded-xl border border-slate-100 bg-slate-50 overflow-hidden mb-6 w-full text-left", !isRunning && latestResult && "active:bg-slate-100 transition-colors")}
+              onClick={() => !isRunning && openResultDetail(runLogToResult(currentTask, sessions))}
+              className={cn("rounded-xl border border-slate-100 bg-slate-50 overflow-hidden mb-6 w-full text-left", !isRunning && "active:bg-slate-100 transition-colors")}
             >
               <div className="flex items-center gap-3 px-4 py-3">
                 {isRunning ? (
@@ -266,7 +268,7 @@ function AgentDetailPage() {
                   <p className="text-[14px] font-semibold text-slate-800 truncate">{currentTask.title}</p>
                   <p className="text-[12px] text-slate-400 mt-0.5 truncate">{currentTask.result}</p>
                 </div>
-                {!isRunning && latestResult && <ChevronRight className="size-4 text-slate-400 shrink-0" />}
+                {!isRunning && <ChevronRight className="size-4 text-slate-400 shrink-0" />}
               </div>
               <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100">
                 <span className="text-[11px] text-slate-400">{isRunning ? "正在执行…" : formatRelDate(currentTask.timestamp)}</span>
@@ -314,13 +316,18 @@ function AgentDetailPage() {
           {historyTasks.length > 0 && (
             <CollapsibleDocSection title="历史" level={2} badge={`${historyTasks.length}`}>
               {historyTasks.map((log) => (
-                <div key={log.id} className="flex items-start gap-3 py-1.5">
+                <button
+                  key={log.id}
+                  onClick={() => openResultDetail(runLogToResult(log, sessions))}
+                  className="flex w-full items-start gap-3 py-1.5 px-2 -mx-2 rounded-md text-left active:bg-slate-100 transition-colors"
+                >
                   <CheckCircle2 className="size-3.5 text-green-500 shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] text-slate-700 leading-snug">{log.title}</p>
                     <span className="text-[11px] text-slate-400">{formatRelDate(log.timestamp)}</span>
                   </div>
-                </div>
+                  <ChevronRight className="size-4 text-slate-400 shrink-0 mt-0.5" />
+                </button>
               ))}
             </CollapsibleDocSection>
           )}
@@ -941,7 +948,7 @@ function ResultDetailPage() {
   if (!activeResult) return null
 
   return (
-    <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 280 }} className="absolute inset-0 z-40 flex flex-col bg-white">
+    <motion.div initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", damping: 28, stiffness: 280 }} className="absolute inset-0 z-[45] flex flex-col bg-white">
       <div className="shrink-0 flex items-center px-3 py-2.5 bg-white border-b border-slate-100 safe-top">
         <button onClick={goBack} className="shrink-0 text-slate-500 mr-2"><ChevronLeft className="size-6" /></button>
         <span className="text-[16px] font-bold text-slate-800 flex-1">报告详情</span>
@@ -1204,7 +1211,9 @@ function AgentPlanDetailPage() {
   const activeAgentPlan = useChatStore((s) => s.activeAgentPlan)
   const goBack = useChatStore((s) => s.goBack)
   const agents = useChatStore((s) => s.agents)
+  const sessions = useChatStore((s) => s.sessions)
   const taskState = useChatStore((s) => s.taskState)
+  const openResultDetail = useChatStore((s) => s.openResultDetail)
   const [editingPlan, setEditingPlan] = useState(false)
   const [planText, setPlanText] = useState("")
 
@@ -1240,7 +1249,10 @@ function AgentPlanDetailPage() {
 
           {/* Current task card */}
           {currentTask && (
-            <div className="rounded-xl border border-slate-100 bg-slate-50 overflow-hidden mb-6">
+            <button
+              onClick={() => !isRunning && openResultDetail(runLogToResult(currentTask, sessions))}
+              className={cn("rounded-xl border border-slate-100 bg-slate-50 overflow-hidden mb-6 w-full text-left", !isRunning && "active:bg-slate-100 transition-colors")}
+            >
               <div className="flex items-center gap-3 px-4 py-3">
                 {isRunning ? (
                   <Loader2 className="size-5 text-blue-500 animate-spin shrink-0" />
@@ -1251,12 +1263,13 @@ function AgentPlanDetailPage() {
                   <p className="text-[14px] font-semibold text-slate-800 truncate">{currentTask.title}</p>
                   <p className="text-[12px] text-slate-400 mt-0.5 truncate">{currentTask.result}</p>
                 </div>
+                {!isRunning && <ChevronRight className="size-4 text-slate-400 shrink-0" />}
               </div>
               <div className="flex items-center justify-between px-4 py-2 border-t border-slate-100">
                 <span className="text-[11px] text-slate-400">{isRunning ? "正在执行…" : formatRelDate(currentTask.timestamp)}</span>
                 <span className="text-[11px] text-slate-400">{currentTask.tokenUsage} tokens</span>
               </div>
-            </div>
+            </button>
           )}
 
           {/* H1: Plan */}
@@ -1297,13 +1310,18 @@ function AgentPlanDetailPage() {
           {historyTasks.length > 0 && (
             <CollapsibleDocSection title="历史" level={2} badge={`${historyTasks.length}`}>
               {historyTasks.map((log) => (
-                <div key={log.id} className="flex items-start gap-3 py-1.5">
+                <button
+                  key={log.id}
+                  onClick={() => openResultDetail(runLogToResult(log, sessions))}
+                  className="flex w-full items-start gap-3 py-1.5 px-2 -mx-2 rounded-md text-left active:bg-slate-100 transition-colors"
+                >
                   <CheckCircle2 className="size-3.5 text-green-500 shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] text-slate-700 leading-snug">{log.title}</p>
                     <span className="text-[11px] text-slate-400">{formatRelDate(log.timestamp)}</span>
                   </div>
-                </div>
+                  <ChevronRight className="size-4 text-slate-400 shrink-0 mt-0.5" />
+                </button>
               ))}
             </CollapsibleDocSection>
           )}
